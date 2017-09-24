@@ -8,7 +8,7 @@ import subprocess
 log = CPLog(__name__)
 
 # Edit to point to the absolute path where the rest of the script resides
-path = "C:\\Scripts\\"
+path = "//Users//Steven//mBox//mBox-Applications//sickbeard_mp4_automator//"
 
 
 class PostProcess(Plugin):
