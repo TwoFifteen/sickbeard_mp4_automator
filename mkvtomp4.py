@@ -25,6 +25,8 @@ class MkvtoMp4:
                  video_width=None,
                  h264_level=None,
                  qsv_decoder=True,
+                 hevc_qsv_decoder=False,
+                 dxva2_decoder=False,
                  audio_codec=['ac3'],
                  audio_bitrate=256,
                  audio_filter=None,
@@ -83,6 +85,8 @@ class MkvtoMp4:
         self.video_width = video_width
         self.h264_level = h264_level
         self.qsv_decoder = qsv_decoder
+        self.hevc_qsv_decoder = hevc_qsv_decoder
+        self.dxva2_decoder = dxva2_decoder
         self.pix_fmt = pix_fmt
         # Audio settings
         self.audio_codec = audio_codec
@@ -136,6 +140,8 @@ class MkvtoMp4:
         self.video_width = settings.vwidth
         self.h264_level = settings.h264_level
         self.qsv_decoder = settings.qsv_decoder
+        self.hevc_qsv_decoder = settings.hevc_qsv_decoder
+        self.dxva2_decoder = settings.dxva2_decoder
         self.pix_fmt = settings.pix_fmt
         # Audio settings
         self.audio_codec = settings.acodec
@@ -352,6 +358,10 @@ class MkvtoMp4:
 
             self.log.info("Audio detected for stream #%s: %s [%s]." % (a.index, a.codec, a.metadata['language']))
 
+            if a.codec.lower() == 'truehd': # Need to skip it early so that it flags the next track as default.
+                self.log.info( "MP4 containers do not support truehd audio, and converting it is inconsistent due to video/audio sync issues. Skipping stream %s as typically the 2nd audio track is the AC3 core of the truehd stream." % a.index )
+                continue
+
             # Set undefined language to default language if specified
             if self.adl is not None and a.metadata['language'] == 'und':
                 self.log.debug("Undefined language detected, defaulting to [%s]." % self.adl)
@@ -383,7 +393,7 @@ class MkvtoMp4:
                         'filter': self.iOS_filter,
                         'language': a.metadata['language'],
                         'disposition': disposition,
-                        }
+                    }
                     if not self.iOSLast:
                         audio_settings.update({l: iosdata})
                         l += 1
@@ -450,7 +460,7 @@ class MkvtoMp4:
                     audio_settings[l]['bsf'] = 'aac_adtstoasc'
                 l += 1
 
-                #Add the iOS track last instead
+                # Add the iOS track last instead
                 if self.iOSLast and iosdata:
                     iosdata['disposition'] = 'none'
                     audio_settings.update({l: iosdata})
@@ -647,8 +657,11 @@ class MkvtoMp4:
         if self.postopts:
             options['postopts'].extend(self.postopts)
 
-        # If using h264qsv, add the codec in front of the input for decoding
-        if vcodec == "h264qsv" and info.video.codec.lower() == "h264" and self.qsv_decoder and (info.video.video_level / 10) < 5:
+        if self.dxva2_decoder:  # DXVA2 will fallback to CPU decoding when it hits a file that it cannot handle, so we don't need to check if the file is supported.
+            options['preopts'].extend(['-hwaccel', 'dxva2'])
+        elif info.video.codec.lower() == "hevc" and self.hevc_qsv_decoder:
+            options['preopts'].extend(['-vcodec', 'hevc_qsv'])
+        elif vcodec == "h264qsv" and info.video.codec.lower() == "h264" and self.qsv_decoder and (info.video.video_level / 10) < 5:
             options['preopts'].extend(['-vcodec', 'h264_qsv'])
 
         # Add width option
@@ -658,6 +671,11 @@ class MkvtoMp4:
         # Add pix_fmt
         if self.pix_fmt:
             options['video']['pix_fmt'] = self.pix_fmt[0]
+
+        # HEVC Tagging for copied streams
+        if info.video.codec.lower() in ['x265', 'h265', 'hevc'] and vcodec == 'copy':
+            options['postopts'].extend(['-tag:v', 'hvc1'])
+            self.log.info("Tagging copied video stream as hvc1")
 
         self.options = options
         return options
